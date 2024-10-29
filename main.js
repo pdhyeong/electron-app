@@ -22,6 +22,7 @@ const createWindow = () => {
 };
 
 app.whenReady().then(() => {
+    
     createWindow();
   // 메시지 수신 처리
     ipcMain.handle('select-file', async () => {
