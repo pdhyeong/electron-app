@@ -1,10 +1,11 @@
 const { dialog } = require('electron');
-const fs = require('path');
+const fs = require('fs');
+const path = require('path');
 const {exec} = require('child_process');
 
 const setfile = async () => {
     const result = await dialog.showOpenDialog({
-    properties: ['openFile'],
+        properties: ['openFile'],
     });
     if (result.canceled) return null;
     return result.filePaths[0]; // 선택된 파일 경로 반환
@@ -15,16 +16,17 @@ const readdiretory = async (event, dirPath) => {
       .then(contents => contents.map(item => ({
           name: item.name,
           isDirectory: item.isDirectory(),
+          fullPath : path.join(dirPath,item.name)
       })))
       .catch(err => { throw err; });
   };
 
 const setdirectory = async () => {
     const result = await dialog.showOpenDialog({
-    properties: ["openDirectory"],
+        properties: ["openDirectory"],
     });
     if (result.canceled) return null;
-    return result.filePaths[0];
+    return result.filePaths[0]; 
 };
 
 const exec_extract_siege = (event, arg) => {
