@@ -12,14 +12,21 @@ const setfile = async () => {
 };
 
 const readdiretory = async (event, dirPath) => {
-  return fs.promises.readdir(dirPath, { withFileTypes: true })
-      .then(contents => contents.map(item => ({
-          name: item.name,
-          isDirectory: item.isDirectory(),
-          fullPath : path.join(dirPath,item.name)
-      })))
-      .catch(err => { throw err; });
-  };
+    if(typeof dirPath !== 'string' || dirPath.trim() === ''){
+        throw new Error('Invaild directory path');
+    }
+    try {
+        return fs.promises.readdir(dirPath, { withFileTypes: true })
+        .then(contents => contents.map(item => ({
+            name: item.name,
+            isDirectory: item.isDirectory(),
+            fullPath : path.join(dirPath,item.name)
+        })));
+    }
+    catch (err){
+        console.error(`Error reading Directory ${err}`);
+    }
+}
 
 const setdirectory = async () => {
     const result = await dialog.showOpenDialog({
@@ -40,13 +47,15 @@ const exec_extract_siege = (event, arg) => {
             event.reply('result',error);
             reject(error.message);
         }
-        if (stderr) {
+        else if (stderr) {
             console.error(`stderr: ${stderr}`);
             event.reply('result',error);
             reject(stderr);
         }
-        console.log(stdout);
-        event.reply('result',"extract Success");
+        else{
+            console.log(stdout);
+            event.reply('result',"extract Success");
+        }
     });
 };
 
