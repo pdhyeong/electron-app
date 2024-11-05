@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const { exec } = require("child_process");
 const path = require('path');
 const fs = require("fs");
-const {setfile, readdiretory , setdirectory, exec_extract_siege} = require('./handler');
+const {setfile, readdiretory , setdirectory, exec_extract_siege, openDialog} = require('./handler');
 let mainWindow;
 
 const createWindow = () => {
@@ -25,9 +25,9 @@ app.whenReady().then(() => {
     
     createWindow();
 
-    ipcMain.handle('select-file', setfile);
+    ipcMain.handle('select-file', () => openDialog('file'));
+    ipcMain.handle("select-directory", () => openDialog('directory'));
     ipcMain.handle('get-directory-contents', readdiretory);
-    ipcMain.handle("select-directory", setdirectory);
     ipcMain.on('message', exec_extract_siege);
 
     app.on('ready', () => {

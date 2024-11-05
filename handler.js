@@ -3,10 +3,18 @@ const fs = require('fs');
 const path = require('path');
 const {exec} = require('child_process');
 
-const setfile = async () => {
+let isFileDialogOpen = false;
+let isRunningexec = false;
+let sendresult = false;
+
+const openDialog = async (fileType) => {
+    if(isFileDialogOpen) return;
+    isFileDialogOpen = true;
+    const prop = fileType === 'file' ? 'openFile': 'openDirectory';
     const result = await dialog.showOpenDialog({
-        properties: ['openFile'],
+        properties: [prop],
     });
+    isFileDialogOpen = false;
     if (result.canceled) return null;
     return result.filePaths[0]; // 선택된 파일 경로 반환
 };
@@ -28,35 +36,28 @@ const readdiretory = async (event, dirPath) => {
     }
 }
 
-const setdirectory = async () => {
-    const result = await dialog.showOpenDialog({
-        properties: ["openDirectory"],
-    });
-    if (result.canceled) return null;
-    return result.filePaths[0]; 
-};
-
 const exec_extract_siege = (event, arg) => {
     // 메시지 응답
     const siege_extract_cmd = 'siege -e';
     const extract_file_path = arg.extract_file;
     const result_direct = arg.direct;
+    if(isRunningexec) return;
+    isRunningexec = true;
     exec(`${siege_extract_cmd} ${extract_file_path} ${result_direct}`, (error, stdout, stderr) => {
         if (error) {
             console.error(`exec error: ${error}`);
-            event.reply('result',error);
             reject(error.message);
         }
         else if (stderr) {
             console.error(`stderr: ${stderr}`);
-            event.reply('result',error);
             reject(stderr);
         }
-        else{
-            console.log(stdout);
-            event.reply('result',"extract Success");
-        }
+        if(sendresult)return;
+        sendresult = true;
+        event.reply('result',"data");
+        sendresult = false;
     });
+    isRunningexec = false;
 };
 
-module.exports = {setfile, readdiretory , setdirectory, exec_extract_siege};
+module.exports = {readdiretory , exec_extract_siege, openDialog};
