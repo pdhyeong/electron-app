@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const { exec } = require("child_process");
 
+const USERPATH = path.join(__dirname, "./siege/src/database/data.json");
 let isFileDialogOpen = false;
 let isRunningexec = false;
 let sendresult = false;
@@ -36,20 +37,27 @@ const readdiretory = async (event, dirPath) => {
     }
 };
 const read_userData = () => {
-    const filePath = path.join(__dirname, "./siege/src/database/data.json");
-    const user_data = fs.readFileSync(filePath, "utf-8");
+    const user_data = fs.readFileSync(USERPATH, "utf-8");
     return JSON.parse(user_data);
 };
 const save_userData = async (event, users) => {
-    const filePath = path.join(__dirname, "./siege/src/database/data.json");
     try {
         const current_users = read_userData();
         const new_user = [...current_users, users];
-        fs.writeFileSync(filePath, JSON.stringify(new_user, null, 2), "utf-8");
+        fs.writeFileSync(USERPATH, JSON.stringify(new_user, null, 2), "utf-8");
         return { success: true };
     } catch (err) {
         console.log("Error writing to file", err);
         return { success: false, error: err.message };
+    }
+};
+
+const clear_userData = async (event, data) => {
+    try {
+        fs.writeFileSync(USERPATH, JSON.stringify(data, null, 2), "utf-8");
+        console.log("Completed initialize");
+    } catch (err) {
+        console.error(err);
     }
 };
 
@@ -76,4 +84,4 @@ const exec_extract_siege = (event, arg) => {
     isRunningexec = false;
 };
 
-module.exports = { readdiretory, exec_extract_siege, openDialog, save_userData };
+module.exports = { readdiretory, exec_extract_siege, openDialog, save_userData, clear_userData };
