@@ -35,17 +35,22 @@ const readdiretory = async (event, dirPath) => {
         console.error(`Error reading Directory ${err}`);
     }
 };
-
+const read_userData = () => {
+    const filePath = path.join(__dirname, "./siege/src/database/data.json");
+    const user_data = fs.readFileSync(filePath, "utf-8");
+    return JSON.parse(user_data);
+};
 const save_userData = async (event, users) => {
-    // const filePath = path.join(__dirname, "");
-    // try {
-    //     fs.writeFileSync(filePath, JSON.stringify({ users }, null, 2), "utf-8");
-    //     return { success: true };
-    // } catch (err) {
-    //     console.log("Error writing to file", error);
-    //     return { success: false, error: err.message };
-    // }
-    console.log(users);
+    const filePath = path.join(__dirname, "./siege/src/database/data.json");
+    try {
+        const current_users = read_userData();
+        const new_user = [...current_users, users];
+        fs.writeFileSync(filePath, JSON.stringify(new_user, null, 2), "utf-8");
+        return { success: true };
+    } catch (err) {
+        console.log("Error writing to file", err);
+        return { success: false, error: err.message };
+    }
 };
 
 const exec_extract_siege = (event, arg) => {
