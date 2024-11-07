@@ -21,21 +21,21 @@ const openDialog = async (fileType) => {
 };
 
 const readdiretory = async (event, dirPath) => {
-    if (typeof dirPath !== "string" || dirPath.trim() === "") {
-        throw new Error("Invaild directory path");
-    }
-    try {
-        return fs.promises.readdir(dirPath, { withFileTypes: true }).then((contents) =>
-            contents.map((item) => ({
-                name: item.name,
-                isDirectory: item.isDirectory(),
-                fullPath: path.join(dirPath, item.name),
-            }))
-        );
-    } catch (err) {
-        console.error(`Error reading Directory ${err}`);
+    if(typeof dirPath === 'string'){
+        try {
+            return fs.promises.readdir(dirPath, { withFileTypes: true }).then((contents) =>
+                contents.map((item) => ({
+                    name: item.name,
+                    isDirectory: item.isDirectory(),
+                    fullPath: path.join(dirPath, item.name),
+                }))
+            );
+        } catch (err) {
+            console.error(`Error reading Directory ${err}`);
+        }
     }
 };
+
 const read_userData = () => {
     const user_data = fs.readFileSync(USERPATH, "utf-8");
     return JSON.parse(user_data);
@@ -78,7 +78,7 @@ const exec_extract_siege = (event, arg) => {
         }
         if (sendresult) return;
         sendresult = true;
-        event.reply("result", "data");
+        event.reply("result", "success");
         sendresult = false;
     });
     isRunningexec = false;
