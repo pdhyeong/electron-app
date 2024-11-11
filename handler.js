@@ -68,13 +68,14 @@ const exec_extract_siege = (event, arg) => {
     const result_direct = arg.direct;
     if (isRunningexec) return;
     isRunningexec = true;
+    console.log(extract_file_path + ' ' + result_direct);
     exec(`${siege_extract_cmd} ${extract_file_path} ${result_direct}`, (error, stdout, stderr) => {
         if (error) {
             console.error(`exec error: ${error}`);
-            reject(error.message);
+            event.reply("result", "execError");
         } else if (stderr) {
             console.error(`stderr: ${stderr}`);
-            reject(stderr);
+            event.reply("result", "stderr");
         }
         if (sendresult) return;
         sendresult = true;

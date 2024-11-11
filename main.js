@@ -9,6 +9,7 @@ const {
     clear_userData,
 } = require("./handler");
 
+const { isMac,isLinux,isWindows } = require('./detect-platform');
 let mainWindow;
 
 const createWindow = () => {
@@ -33,7 +34,7 @@ app.whenReady().then(() => {
     ipcMain.handle("select-file", () => openDialog("file"));
     ipcMain.handle("select-directory", () => openDialog("directory"));
     ipcMain.handle("get-directory-contents", readdiretory);
-    ipcMain.on("message", exec_extract_siege);
+    ipcMain.on("exec-siege", exec_extract_siege);
     ipcMain.on("save-user-data", save_userData);
     ipcMain.on("clear-user-data", clear_userData);
 
