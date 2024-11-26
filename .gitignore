@@ -1,2 +1,5 @@
 node_modules
 ./siege/node_modules
+./siege
+./tabler
+dist/

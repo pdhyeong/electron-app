@@ -1,4 +1,4 @@
-const { dialog } = require("electron");
+const { dialog,BrowserWindow } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const { exec } = require("child_process");
@@ -11,8 +11,9 @@ let sendresult = false;
 const openDialog = async (fileType) => {
     if (isFileDialogOpen) return;
     isFileDialogOpen = true;
+    const mainWindow = BrowserWindow.getFocusedWindow();
     const prop = fileType === "file" ? "openFile" : "openDirectory";
-    const result = await dialog.showOpenDialog({
+    const result = await dialog.showOpenDialog(mainWindow,{
         properties: [prop],
     });
     isFileDialogOpen = false;
@@ -20,11 +21,48 @@ const openDialog = async (fileType) => {
     return result.filePaths[0]; // 선택된 파일 경로 반환
 };
 
+const readDirectoryRecursive = async (dirPath) => {
+    if(typeof dirPath === "string"){
+        const contents = await fs.promises.readdir(dirPath, { withFileTypes: true });
+        const children = await Promise.all(
+            contents.map(async (item) => {
+                const fullPath = path.join(dirPath, item.name);
+                if (item.isDirectory()) {
+                    // 디렉토리일 경우, 하위 디렉토리를 읽음
+                    return {
+                        name: "📁 " + item.name,
+                        isDirectory: item.isDirectory(),
+                        toggled: false,
+                        fullPath: fullPath,
+                        children: await readDirectoryRecursive(fullPath), // RecursiveCall
+                    };
+                } else {
+                    // 파일일 경우
+                    return { name: "📄 " + item.name };
+                }
+            })
+        );
+        return children;
+    }
+};
+const readTreeStructure = async (event, dirPath) => {
+    if(typeof dirPath === "string"){
+        try {
+            const treeData = await readDirectoryRecursive(dirPath);
+            return { name: `📁 ${path.basename(dirPath)}`, toggled: true, children: treeData };
+        } catch (error) {
+            console.error("Error reading directory structure:", error);
+            return { name: "Error", toggled: false };
+        }
+    }
+}
+
 const readdiretory = async (event, dirPath) => {
     if(typeof dirPath === 'string'){
         try {
             return fs.promises.readdir(dirPath, { withFileTypes: true }).then((contents) =>
-                contents.map((item) => ({
+                contents.map((item, index) => ({
+                    id: index,
                     name: item.name,
                     isDirectory: item.isDirectory(),
                     fullPath: path.join(dirPath, item.name),
@@ -85,4 +123,4 @@ const exec_extract_siege = (event, arg) => {
     isRunningexec = false;
 };
 
-module.exports = { readdiretory, exec_extract_siege, openDialog, save_userData, clear_userData };
+module.exports = { readdiretory, exec_extract_siege, openDialog, save_userData, clear_userData, readTreeStructure };

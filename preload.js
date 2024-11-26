@@ -12,4 +12,5 @@ contextBridge.exposeInMainWorld("electron", {
     selectFile: () => ipcRenderer.invoke("select-file"),
     selectDirectory: () => ipcRenderer.invoke("select-directory"),
     getDirectory: (dirPath) => ipcRenderer.invoke("get-directory-contents", dirPath),
+    getTreeStructure: (dirPath) => ipcRenderer.invoke("get-tree-contents", dirPath),
 });

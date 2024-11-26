@@ -1,15 +1,17 @@
-const { app, BrowserWindow, ipcMain } = require("electron");
+const { app, BrowserWindow, ipcMain, protocol } = require("electron");
 const path = require("path");
-
+const fs = require("fs");
 const {
     readdiretory,
     exec_extract_siege,
     openDialog,
     save_userData,
     clear_userData,
+    readTreeStructure
 } = require("./handler");
 
 const { isMac,isLinux,isWindows } = require('./detect-platform');
+
 let mainWindow;
 
 const createWindow = () => {
@@ -24,8 +26,11 @@ const createWindow = () => {
             webSecurity: true,
         },
     });
-    mainWindow.loadURL("http://localhost:3000"); // React 앱이 실행 중인 URL,
-    mainWindow.webContents.openDevTools();
+
+    //const url = `file://${join(__dirname,'./siege/build/index.html')}` | `http://localhost:3000`;
+    mainWindow.loadURL("http://localhost:3000"); 
+    // React 앱이 실행 중인 URL,
+    //mainWindow.webContents.openDevTools();
 };
 
 app.whenReady().then(() => {
@@ -34,6 +39,7 @@ app.whenReady().then(() => {
     ipcMain.handle("select-file", () => openDialog("file"));
     ipcMain.handle("select-directory", () => openDialog("directory"));
     ipcMain.handle("get-directory-contents", readdiretory);
+    ipcMain.handle("get-tree-contents", readTreeStructure);
     ipcMain.on("exec-siege", exec_extract_siege);
     ipcMain.on("save-user-data", save_userData);
     ipcMain.on("clear-user-data", clear_userData);

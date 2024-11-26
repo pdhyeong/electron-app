@@ -5,16 +5,21 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "electron": "wait-on http://localhost:3000 && electron .",
-    "dev": "concurrently \"cd siege && npm run react-start\" \"npm run electron\""
+    "dev": "concurrently \"cd siege && npm run react-start\" \"npm run electron .\"",
+    "pack": "electron-builder"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
+  "description": "Your app description here",
   "dependencies": {
+    "@tabler/core": "^1.0.0-beta21",
     "concurrently": "^9.0.1",
-    "electron": "^33.0.2",
-    "electron-builder": "^25.1.8",
+    "electronmon": "^2.0.3",
     "wait-on": "^8.0.1"
+  },
+  "devDependencies": {
+    "electron": "^33.0.2",
+    "electron-builder": "^25.1.8"
   }
 }
