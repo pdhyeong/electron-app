@@ -1,22 +1,20 @@
-const { app, BrowserWindow, ipcMain, protocol } = require("electron");
+const { app, BrowserWindow, ipcMain, protocol, session } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const {
     readdiretory,
     exec_extract_siege,
     openDialog,
-    save_userData,
-    clear_userData,
-    readTreeStructure
+    readTreeStructure,
+    open_explorer,
+    start_siege
 } = require("./handler");
-
-const { isMac,isLinux,isWindows } = require('./detect-platform');
 
 let mainWindow;
 
 const createWindow = () => {
     mainWindow = new BrowserWindow({
-        width: 800,
+        width: 1100,
         height: 600,
         webPreferences: {
             preload: path.join(__dirname, "preload.js"),
@@ -28,6 +26,7 @@ const createWindow = () => {
     });
 
     //const url = `file://${join(__dirname,'./siege/build/index.html')}` | `http://localhost:3000`;
+    console.log(`current is ${process.env.NODE_ENV}`);
     mainWindow.loadURL("http://localhost:3000"); 
     // React 앱이 실행 중인 URL,
     //mainWindow.webContents.openDevTools();
@@ -41,8 +40,8 @@ app.whenReady().then(() => {
     ipcMain.handle("get-directory-contents", readdiretory);
     ipcMain.handle("get-tree-contents", readTreeStructure);
     ipcMain.on("exec-siege", exec_extract_siege);
-    ipcMain.on("save-user-data", save_userData);
-    ipcMain.on("clear-user-data", clear_userData);
+    ipcMain.on("open-exploer",open_explorer);
+    ipcMain.on("generate-siege",start_siege);
 
     app.on("ready", () => {
         session.defaultSession.webRequest.onHeadersReceived((details, callback) => {

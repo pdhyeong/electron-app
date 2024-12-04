@@ -2,14 +2,22 @@ const { dialog,BrowserWindow } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const { exec } = require("child_process");
+const { stderr } = require("process");
+const { isMac,isLinux,isWindows } = require('./detect-platform');
 
-const USERPATH = path.join(__dirname, "./siege/src/database/data.json");
 let isFileDialogOpen = false;
-let isRunningexec = false;
+let isExplorerOpen = false;
+let isRunningExec = false;
 let sendresult = false;
+let isSiegeExec = false;
 
+/**
+ * 
+ * @param {string}  fileType
+ */
 const openDialog = async (fileType) => {
     if (isFileDialogOpen) return;
+
     isFileDialogOpen = true;
     const mainWindow = BrowserWindow.getFocusedWindow();
     const prop = fileType === "file" ? "openFile" : "openDirectory";
@@ -18,9 +26,14 @@ const openDialog = async (fileType) => {
     });
     isFileDialogOpen = false;
     if (result.canceled) return null;
+
     return result.filePaths[0]; // 선택된 파일 경로 반환
 };
 
+/**
+ * 
+ * @param {string} dirPath 
+ */
 const readDirectoryRecursive = async (dirPath) => {
     if(typeof dirPath === "string"){
         const contents = await fs.promises.readdir(dirPath, { withFileTypes: true });
@@ -32,9 +45,10 @@ const readDirectoryRecursive = async (dirPath) => {
                     return {
                         name: "📁 " + item.name,
                         isDirectory: item.isDirectory(),
-                        toggled: false,
+                        isOpen: true,
+                        toggled: true,
                         fullPath: fullPath,
-                        children: await readDirectoryRecursive(fullPath), // RecursiveCall
+                        children: await readDirectoryRecursive(fullPath),
                     };
                 } else {
                     // 파일일 경우
@@ -45,11 +59,17 @@ const readDirectoryRecursive = async (dirPath) => {
         return children;
     }
 };
+
+/**
+ * 
+ * @param {response} event 
+ * @param {string} dirPath 
+ */
 const readTreeStructure = async (event, dirPath) => {
     if(typeof dirPath === "string"){
         try {
             const treeData = await readDirectoryRecursive(dirPath);
-            return { name: `📁 ${path.basename(dirPath)}`, toggled: true, children: treeData };
+            return { name: `📁 ${path.basename(dirPath)}`,isOpen:true ,toggled: true, children: treeData };
         } catch (error) {
             console.error("Error reading directory structure:", error);
             return { name: "Error", toggled: false };
@@ -57,6 +77,11 @@ const readTreeStructure = async (event, dirPath) => {
     }
 }
 
+/**
+ * 
+ * @param {response} event 
+ * @param {string} dirPath 
+ */
 const readdiretory = async (event, dirPath) => {
     if(typeof dirPath === 'string'){
         try {
@@ -74,53 +99,117 @@ const readdiretory = async (event, dirPath) => {
     }
 };
 
-const read_userData = () => {
-    const user_data = fs.readFileSync(USERPATH, "utf-8");
-    return JSON.parse(user_data);
-};
-const save_userData = async (event, users) => {
-    try {
-        const current_users = read_userData();
-        const new_user = [...current_users, users];
-        fs.writeFileSync(USERPATH, JSON.stringify(new_user, null, 2), "utf-8");
-        return { success: true };
-    } catch (err) {
-        console.log("Error writing to file", err);
-        return { success: false, error: err.message };
-    }
-};
+/**
+ * 
+ * @param {response} event 
+ * @param {string} path 
+ */
+const open_explorer = (event, path) => {
+    if (isExplorerOpen) return; 
 
-const clear_userData = async (event, data) => {
-    try {
-        fs.writeFileSync(USERPATH, JSON.stringify(data, null, 2), "utf-8");
-        console.log("Completed initialize");
-    } catch (err) {
-        console.error(err);
-    }
-};
+    if (typeof path === "string" && path) {
+        isExplorerOpen = true; 
 
-const exec_extract_siege = (event, arg) => {
-    // 메시지 응답
-    const siege_extract_cmd = "siege -e";
-    const extract_file_path = arg.extract_file;
-    const result_direct = arg.direct;
-    if (isRunningexec) return;
-    isRunningexec = true;
-    console.log(extract_file_path + ' ' + result_direct);
-    exec(`${siege_extract_cmd} ${extract_file_path} ${result_direct}`, (error, stdout, stderr) => {
-        if (error) {
-            console.error(`exec error: ${error}`);
-            event.reply("result", "execError");
-        } else if (stderr) {
-            console.error(`stderr: ${stderr}`);
-            event.reply("result", "stderr");
+        try {
+            exec(`explorer "${path}"`, (error, stdout, stderr) => {
+                if (error) {
+                    console.error(`exec error: ${error}`);
+                } else if (stderr) {
+                    console.error(`stderr: ${stderr}`);
+                }
+            });
+        } catch (err) {
+            console.error(`occur Error: ${err}`); 
         }
-        if (sendresult) return;
-        sendresult = true;
-        event.reply("result", "success");
-        sendresult = false;
-    });
-    isRunningexec = false;
+        finally{
+            isExplorerOpen = false;
+            isExplorerOpen = false;
+        }
+    }
 };
 
-module.exports = { readdiretory, exec_extract_siege, openDialog, save_userData, clear_userData, readTreeStructure };
+/**
+ * 
+ * @param {response} event 
+ * @param {object} arg 
+ */
+const exec_extract_siege = (event, arg) => {
+    const siege_extract_cmd = "siege -e";
+    const { extract_file: extractFilePath, direct: resultDirect } = arg;
+
+    if (!extractFilePath) {
+        console.error("No file path provided for extraction.");
+        return;
+    }
+
+    if (isRunningExec) return;
+
+    isRunningExec = true;
+    console.log(`Extracting file: ${extractFilePath} to ${resultDirect}`);
+
+    try {
+        exec(`${siege_extract_cmd} ${extractFilePath} ${resultDirect}`, (error, stdout, stderr) => {
+            if (error) {
+                console.error(`Execution error: ${error}`);
+                event.reply("result", "execError");
+                return;
+            }
+
+            if (stderr) {
+                console.error(`stderr: ${stderr}`);
+                event.reply("result", "stderr");
+                return;
+            }
+
+            if (sendresult) return;
+            sendresult = true;
+
+            console.log(`Extraction completed with ${extractFilePath}`);
+            event.reply("result", "success");
+        });
+    } catch (err) {
+        console.error(`Unexpected error: ${err}`);
+        event.reply("result", "execError");
+    } finally {
+        isRunningExec = false; 
+        sendresult = false; 
+    }
+};
+
+/**
+ * 
+ * @param {response} event 
+ */
+const start_siege= async (event) => {
+
+    if (isSiegeExec) return;
+
+    isSiegeExec = true;
+
+    const powerShell_cmd = "powershell";
+    const operation = "start-process"; 
+    const option = "-windowstyle";
+    const prop = "hidden" 
+    const filePath = "-FilePath" 
+
+    console.log(`Start Siege Service with Docker`);
+
+    try {
+        exec(`${powerShell_cmd} ${operation} ${option} ${prop} ${filePath} wsl.exe`, (error, stdout, stderr) => {
+            if (error) {
+                console.error(`Execution error: ${error}`);
+                return;
+            }
+
+            if (stderr) {
+                console.error(`stderr: ${stderr}`);
+                return;
+            }
+            console.log(`execute to docker with wsl`);
+        });
+    } catch (err) {
+        console.error(`Unexpected error: ${err}`);
+    }
+}
+
+module.exports = { readdiretory, exec_extract_siege, openDialog, readTreeStructure, open_explorer, start_siege};
