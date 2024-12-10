@@ -26,7 +26,6 @@ const createWindow = () => {
     });
 
     //const url = `file://${join(__dirname,'./siege/build/index.html')}` | `http://localhost:3000`;
-    console.log(`current is ${process.env.NODE_ENV}`);
     mainWindow.loadURL("http://localhost:3000"); 
     // React 앱이 실행 중인 URL,
     //mainWindow.webContents.openDevTools();

@@ -4,8 +4,9 @@
   "main": "main.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "electron": "wait-on http://localhost:3000 && electron .",
-    "dev": "concurrently \"cd siege && npm run react-start\" \"npm run electron .\"",
+    "react-start": "cd siege && npm start",
+    "electron": "wait-on http://localhost:3000 && electronmon .",
+    "dev": "concurrently \"npm run react-start\" \"npm run electron\"",
     "pack": "electron-builder"
   },
   "keywords": [],
@@ -16,6 +17,7 @@
     "@tabler/core": "^1.0.0-beta21",
     "concurrently": "^9.0.1",
     "electronmon": "^2.0.3",
+    "tar": "^7.4.3",
     "wait-on": "^8.0.1"
   },
   "devDependencies": {

@@ -1,6 +1,7 @@
 const { dialog,BrowserWindow } = require("electron");
 const fs = require("fs");
 const path = require("path");
+const tar = require("tar");
 const { exec } = require("child_process");
 const { stderr } = require("process");
 const { isMac,isLinux,isWindows } = require('./detect-platform');
@@ -10,6 +11,7 @@ let isExplorerOpen = false;
 let isRunningExec = false;
 let sendresult = false;
 let isSiegeExec = false;
+let count = 1;
 
 /**
  * 
@@ -34,30 +36,84 @@ const openDialog = async (fileType) => {
  * 
  * @param {string} dirPath 
  */
+// 디렉토리 읽기
 const readDirectoryRecursive = async (dirPath) => {
-    if(typeof dirPath === "string"){
+    if (typeof dirPath === "string") {
         const contents = await fs.promises.readdir(dirPath, { withFileTypes: true });
         const children = await Promise.all(
             contents.map(async (item) => {
                 const fullPath = path.join(dirPath, item.name);
                 if (item.isDirectory()) {
-                    // 디렉토리일 경우, 하위 디렉토리를 읽음
                     return {
-                        name: "📁 " + item.name,
-                        isDirectory: item.isDirectory(),
-                        isOpen: true,
-                        toggled: true,
-                        fullPath: fullPath,
+                        name: `📁 ${item.name}`,
+                        isDirectory: true,
                         children: await readDirectoryRecursive(fullPath),
                     };
+                } else if (item.name.endsWith(".tar.gz") || item.name.endsWith(".tar")) {
+                    console.log("Complete Search");
+                    const tarContents = await readTarFile(fullPath);
+                    return {
+                        name: `📦 ${item.name}`,
+                        isDirectory: false,
+                        children: tarContents,
+                    };
                 } else {
-                    // 파일일 경우
-                    return { name: "📄 " + item.name };
+                    return { name: `📄 ${item.name}`, isDirectory: false };
                 }
             })
         );
-        return children;
+        return children.sort((a, b) => a.name.localeCompare(b.name)); // 정렬 추가
     }
+};
+// tar 파일 읽기
+const readTarFile = async (tarFilePath) => {
+    try {
+        const files = [];
+        await tar.list({
+            file: tarFilePath,
+            onentry: (entry) => {
+                files.push({
+                    name: entry.path.endsWith("/") ? `📁 ${entry.path}` : `📄 ${entry.path}`,
+                    isDirectory: entry.type === "Directory"|| entry.path.endsWith("/"),
+                });
+            },
+        });
+
+        return files // 트리 구조 생성
+    } catch (err) {
+        console.error(`Error reading tar file: ${tarFilePath}`, err);
+        return [{ name: "Error reading tar file", isDirectory: false }];
+    }
+};
+
+// 경로 리스트를 트리 구조로 변환
+const buildTreeFromPaths = (files) => {
+    const root = [];
+    const pathMap = new Map();
+
+    files.forEach((file) => {
+        const parts = file.name.split("/").filter(Boolean); // 슬래시로 경로 분리
+        let currentLevel = root;
+
+        parts.forEach((part, index) => {
+            const isLastPart = index === parts.length - 1;
+            const key = `${currentLevel.map((n) => n.name).join("/")}/${part}`; // 현재 경로 키 생성
+
+            if (!pathMap.has(key)) {
+                const newNode = {
+                    name: isLastPart ? part : `📁 ${part}`,
+                    isDirectory: !isLastPart || file.isDirectory,
+                    children: [],
+                };
+                currentLevel.push(newNode);
+                pathMap.set(key, newNode); // 키에 해당하는 노드 저장
+            }
+
+            currentLevel = pathMap.get(key).children; // 하위 디렉토리로 이동
+        });
+    });
+
+    return root;
 };
 
 /**
@@ -123,7 +179,6 @@ const open_explorer = (event, path) => {
         }
         finally{
             isExplorerOpen = false;
-            isExplorerOpen = false;
         }
     }
 };
@@ -176,14 +231,46 @@ const exec_extract_siege = (event, arg) => {
     }
 };
 
+const isRunning_wsl = async () => {
+    const powershell_cmd = "powershell";
+    const wsl_cmd = "wsl -l -v";
+
+    function checkStopped() {
+        return new Promise((resolve, reject) => {
+            exec(`${powershell_cmd} ${wsl_cmd}`, { encoding: 'utf8' }, (error, stdout, stderr) => {
+                if (error) {
+                    reject(false);
+                    return;
+                }
+    
+                if (stderr) {
+                    reject(false);
+                    return;
+                }
+    
+                if (stdout) {
+                    const utf = stdout.toString('utf8');
+                    utf.split(' ').forEach((ele) => {
+                        if(ele === '\x00S\x00t\x00o\x00p\x00p\x00e\x00d\x00'){
+                            resolve(true); 
+                        }
+                    });
+                } else {
+                    resolve(false);
+                }
+            });
+        });
+    }
+    const result = await checkStopped();
+    return result;
+};
+
 /**
  * 
  * @param {response} event 
  */
 const start_siege= async (event) => {
-
     if (isSiegeExec) return;
-
     isSiegeExec = true;
 
     const powerShell_cmd = "powershell";
@@ -193,22 +280,25 @@ const start_siege= async (event) => {
     const filePath = "-FilePath" 
 
     console.log(`Start Siege Service with Docker`);
+    const check_wsl = await isRunning_wsl();
 
-    try {
-        exec(`${powerShell_cmd} ${operation} ${option} ${prop} ${filePath} wsl.exe`, (error, stdout, stderr) => {
-            if (error) {
-                console.error(`Execution error: ${error}`);
-                return;
-            }
-
-            if (stderr) {
-                console.error(`stderr: ${stderr}`);
-                return;
-            }
-            console.log(`execute to docker with wsl`);
-        });
-    } catch (err) {
-        console.error(`Unexpected error: ${err}`);
+    if(check_wsl){
+        try {
+            exec(`${powerShell_cmd} ${operation} ${option} ${prop} ${filePath} wsl.exe`, (error, stdout, stderr) => {
+                if (error) {
+                    console.error(`Execution error: ${error}`);
+                    return;
+                }
+    
+                if (stderr) {
+                    console.error(`stderr: ${stderr}`);
+                    return;
+                }
+                console.log(`execute to docker with wsl`);
+            });
+        } catch (err) {
+            console.error(`Unexpected error: ${err}`);
+        }
     }
 }
 
