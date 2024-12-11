@@ -11,7 +11,6 @@ let isExplorerOpen = false;
 let isRunningExec = false;
 let sendresult = false;
 let isSiegeExec = false;
-let count = 1;
 
 /**
  * 
@@ -46,7 +45,9 @@ const readDirectoryRecursive = async (dirPath) => {
                 if (item.isDirectory()) {
                     return {
                         name: `📁 ${item.name}`,
+                        isOpen: true,
                         isDirectory: true,
+                        fullPath: fullPath,
                         children: await readDirectoryRecursive(fullPath),
                     };
                 } else if (item.name.endsWith(".tar.gz") || item.name.endsWith(".tar")) {
@@ -54,7 +55,9 @@ const readDirectoryRecursive = async (dirPath) => {
                     const tarContents = await readTarFile(fullPath);
                     return {
                         name: `📦 ${item.name}`,
-                        isDirectory: false,
+                        isOpen: true,
+                        isDirectory: true,
+                        fullPath:fullPath,
                         children: tarContents,
                     };
                 } else {
@@ -65,7 +68,10 @@ const readDirectoryRecursive = async (dirPath) => {
         return children.sort((a, b) => a.name.localeCompare(b.name)); // 정렬 추가
     }
 };
-// tar 파일 읽기
+
+/** 
+ * @param {string} tarFilePath
+*/
 const readTarFile = async (tarFilePath) => {
     try {
         const files = [];
@@ -79,40 +85,43 @@ const readTarFile = async (tarFilePath) => {
             },
         });
 
-        return files // 트리 구조 생성
+        return buildTreeFromPaths(files.splice(1));
     } catch (err) {
         console.error(`Error reading tar file: ${tarFilePath}`, err);
         return [{ name: "Error reading tar file", isDirectory: false }];
     }
 };
 
+/**
+ * 
+ * @param {Array<object>} files 
+ * @returns 
+ */
 // 경로 리스트를 트리 구조로 변환
 const buildTreeFromPaths = (files) => {
-    const root = [];
-    const pathMap = new Map();
+    const root = new Map();
+    let directory = [];
+    files.forEach(({ name, isDirectory }) => {
+        const parts = name.split('/').filter(Boolean);
+        let currentNode = root;
 
-    files.forEach((file) => {
-        const parts = file.name.split("/").filter(Boolean); // 슬래시로 경로 분리
-        let currentLevel = root;
+        for (let i = 1; i < parts.length; i++) {
+            const part = parts[i];
+            const isLastPart = i === parts.length - 1;
 
-        parts.forEach((part, index) => {
-            const isLastPart = index === parts.length - 1;
-            const key = `${currentLevel.map((n) => n.name).join("/")}/${part}`; // 현재 경로 키 생성
-
-            if (!pathMap.has(key)) {
-                const newNode = {
-                    name: isLastPart ? part : `📁 ${part}`,
-                    isDirectory: !isLastPart || file.isDirectory,
-                    children: [],
-                };
-                currentLevel.push(newNode);
-                pathMap.set(key, newNode); // 키에 해당하는 노드 저장
+            // 현재 노드에서 해당 'part'가 존재하는지 확인
+            if (!currentNode.has(part)) {
+                currentNode.set(part, {
+                    name: part,
+                    isDirectory: isLastPart ? isDirectory : true,
+                    children: new Map(),
+                });
             }
 
-            currentLevel = pathMap.get(key).children; // 하위 디렉토리로 이동
-        });
+            currentNode = currentNode.get(part).children;
+        }
     });
-
+    console.log(root);
     return root;
 };
 

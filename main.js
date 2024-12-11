@@ -23,6 +23,7 @@ const createWindow = () => {
             nodeIntegration: false,
             webSecurity: true,
         },
+        autoHideMenuBar: true
     });
 
     //const url = `file://${join(__dirname,'./siege/build/index.html')}` | `http://localhost:3000`;
