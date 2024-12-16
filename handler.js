@@ -51,7 +51,6 @@ const readDirectoryRecursive = async (dirPath) => {
                         children: await readDirectoryRecursive(fullPath),
                     };
                 } else if (item.name.endsWith(".tar.gz") || item.name.endsWith(".tar")) {
-                    console.log("Complete Search");
                     const tarContents = await readTarFile(fullPath);
                     return {
                         name: `📦 ${item.name}`,
@@ -65,7 +64,7 @@ const readDirectoryRecursive = async (dirPath) => {
                 }
             })
         );
-        return children.sort((a, b) => a.name.localeCompare(b.name)); // 정렬 추가
+        return children;
     }
 };
 
@@ -79,13 +78,13 @@ const readTarFile = async (tarFilePath) => {
             file: tarFilePath,
             onentry: (entry) => {
                 files.push({
-                    name: entry.path.endsWith("/") ? `📁 ${entry.path}` : `📄 ${entry.path}`,
+                    name: entry.path,
                     isDirectory: entry.type === "Directory"|| entry.path.endsWith("/"),
                 });
             },
         });
 
-        return buildTreeFromPaths(files.splice(1));
+        return buildTreeFromPaths(tarFilePath,files.splice(1));
     } catch (err) {
         console.error(`Error reading tar file: ${tarFilePath}`, err);
         return [{ name: "Error reading tar file", isDirectory: false }];
@@ -97,31 +96,33 @@ const readTarFile = async (tarFilePath) => {
  * @param {Array<object>} files 
  * @returns 
  */
-// 경로 리스트를 트리 구조로 변환
-const buildTreeFromPaths = (files) => {
-    const root = new Map();
-    let directory = [];
-    files.forEach(({ name, isDirectory }) => {
-        const parts = name.split('/').filter(Boolean);
-        let currentNode = root;
+const buildTreeFromPaths = (tarfilePath,files) => {
+    const root = [];
 
+    // 이렇게 반복문으로 가능한 이유 -> 애초에 정렬되서 데이터가 들어오기 때문
+
+    files.forEach(({ name, isDirectory }) => {
+        const parts = name.split("/").filter(Boolean);
+        let currentNode = root;
         for (let i = 1; i < parts.length; i++) {
             const part = parts[i];
             const isLastPart = i === parts.length - 1;
-
-            // 현재 노드에서 해당 'part'가 존재하는지 확인
-            if (!currentNode.has(part)) {
-                currentNode.set(part, {
-                    name: part,
+            // 기존 노드 탐색
+            let childNode = currentNode.find((node) => node.findcert === part);
+            if (!childNode) {
+                const inter_directory = isLastPart ? parts.slice(1).join("\\") : "";
+                childNode = {
+                    name: isLastPart ? `${isDirectory? `📁 ${part}`:`📄 ${part}`}`:"",
                     isDirectory: isLastPart ? isDirectory : true,
-                    children: new Map(),
-                });
+                    fullPath:`${tarfilePath}\\${inter_directory}`,
+                    children: [],
+                    findcert: part,
+                };
+                currentNode.push(childNode);
             }
-
-            currentNode = currentNode.get(part).children;
+            currentNode = childNode.children;
         }
     });
-    console.log(root);
     return root;
 };
 
