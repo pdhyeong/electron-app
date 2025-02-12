@@ -45,7 +45,7 @@ const readDirectoryRecursive = async (dirPath) => {
                 if (item.isDirectory()) {
                     return {
                         name: `📁 ${item.name}`,
-                        isOpen: true,
+                        isOpen: false,
                         isDirectory: true,
                         fullPath: fullPath,
                         children: await readDirectoryRecursive(fullPath),
@@ -54,7 +54,7 @@ const readDirectoryRecursive = async (dirPath) => {
                     const tarContents = await readTarFile(fullPath);
                     return {
                         name: `📦 ${item.name}`,
-                        isOpen: true,
+                        isOpen: false,
                         isDirectory: true,
                         fullPath:fullPath,
                         children: tarContents,
@@ -209,11 +209,36 @@ const exec_extract_siege = (event, arg) => {
 
     if (isRunningExec) return;
 
+    const extractFile_Name = path.basename(extractFilePath, path.extname(extractFilePath))
+    let maked_dir = `${resultDirect}\\${extractFile_Name}`
+    if (!fs.existsSync(maked_dir)){
+        fs.mkdirSync(maked_dir)
+    }
+    else {
+        const files = fs.readdirSync(resultDirect);
+        
+        const regex = new RegExp(`^${extractFile_Name}_(\\d+)$`);
+        let maxIndex = 0;
+
+        files.forEach(file => {
+            const match = file.match(regex);
+            if (match) {
+                const num = parseInt(match[1], 10);
+                if (!isNaN(num)) {
+                    maxIndex = Math.max(maxIndex, num);
+                }
+            }
+        });
+        if (maxIndex >= 1.7976931348623157e+308) return;
+        maked_dir = `${maked_dir}_${maxIndex + 1}`;
+        fs.mkdirSync(maked_dir);
+    }
+
     isRunningExec = true;
-    console.log(`Extracting file: ${extractFilePath} to ${resultDirect}`);
+    console.log(`Extracting file: ${extractFilePath} to ${maked_dir}`);
 
     try {
-        exec(`${siege_extract_cmd} ${extractFilePath} ${resultDirect}`, (error, stdout, stderr) => {
+        exec(`${siege_extract_cmd} ${extractFilePath} ${maked_dir}`, (error, stdout, stderr) => {
             if (error) {
                 console.error(`Execution error: ${error}`);
                 event.reply("result", "execError");

@@ -1,0 +1,1 @@
+powershell -ExecutionPolicy Bypass -File "C:\Users\raon\Park\electron-app\siege\background.ps1"
