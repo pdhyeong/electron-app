@@ -148,7 +148,7 @@ const readTreeStructure = async (event, dirPath) => {
  * @param {response} event 
  * @param {string} dirPath 
  */
-const readdiretory = async (event, dirPath) => {
+const read_Diretory = async (event, dirPath) => {
     if(typeof dirPath === 'string'){
         try {
             return fs.promises.readdir(dirPath, { withFileTypes: true }).then((contents) =>
@@ -170,12 +170,12 @@ const readdiretory = async (event, dirPath) => {
  * @param {response} event 
  * @param {string} path 
  */
-const open_explorer = (event, path) => {
+const openExplorer = (event, path) => {
     if (isExplorerOpen) return; 
 
     if (typeof path === "string" && path) {
         isExplorerOpen = true; 
-
+        console.log(path)
         try {
             exec(`explorer "${path}"`, (error, stdout, stderr) => {
                 if (error) {
@@ -194,11 +194,56 @@ const open_explorer = (event, path) => {
 };
 
 /**
+ * @param {string} file_name
+ * @param {string} dir_path
+ */
+const rollLogFile = (file_name, dir_path) => {
+    try{
+        const timestamp = new Date().toISOString();
+        const logMessage = `Scan Time:[${timestamp}] file_name: ${file_name}\n`;
+        const max_size = 50 * 1024 * 1024;
+        const log_file = path.join(dir_path, 'history_log_1');
+
+        const regex = /^history_log_(\d+)$/;
+
+        if (fs.existsSync(log_file)) {
+            const files = fs.readdirSync(dir_path);
+
+            let maxIndex = 0;
+
+            files.forEach(file => {
+                const match = file.match(regex);
+                if (match) {
+                    const num = parseInt(match[1], 10);
+                    if (!isNaN(num)) {
+                        maxIndex = Math.max(maxIndex, num);
+                    }
+                }
+            });
+
+            if (fs.statSync(log_file).size > max_size) {
+                const newLogFile = path.join(dir_path, `history_log_${maxIndex + 1}`);
+                fs.renameSync(log_file, newLogFile);
+            }
+        }
+
+        fs.appendFile(log_file, logMessage, (err) => {
+            if (err) {
+                console.error(`로그 작성 중 오류 발생: ${err}`);
+            }
+        });
+    }
+    catch (err){
+        console.error(`로그 파일 처리 중 오류 발생 ${err}`)
+    }
+};
+
+/**
  * 
  * @param {response} event 
  * @param {object} arg 
  */
-const exec_extract_siege = (event, arg) => {
+const exec_Extract_Siege = (event, arg) => {
     const siege_extract_cmd = "siege -e";
     const { extract_file: extractFilePath, direct: resultDirect } = arg;
 
@@ -229,7 +274,7 @@ const exec_extract_siege = (event, arg) => {
                 }
             }
         });
-        if (maxIndex >= 1.7976931348623157e+308) return;
+        if (maxIndex >= Number.MAX_SAFE_INTEGER) return;
         maked_dir = `${maked_dir}_${maxIndex + 1}`;
         fs.mkdirSync(maked_dir);
     }
@@ -253,9 +298,9 @@ const exec_extract_siege = (event, arg) => {
 
             if (sendresult) return;
             sendresult = true;
-
-            console.log(`Extraction completed with ${extractFilePath}`);
+            console.log(`Completed extraction with ${extractFilePath}`);
             event.reply("result", "success");
+            rollLogFile(extractFilePath, resultDirect)
         });
     } catch (err) {
         console.error(`Unexpected error: ${err}`);
@@ -304,7 +349,7 @@ const isRunning_wsl = async () => {
  * 
  * @param {response} event 
  */
-const start_siege= async (event) => {
+const start_Siege= async (event) => {
     if (isSiegeExec) return;
     isSiegeExec = true;
 
@@ -337,4 +382,4 @@ const start_siege= async (event) => {
     }
 }
 
-module.exports = { readdiretory, exec_extract_siege, openDialog, readTreeStructure, open_explorer, start_siege};
+module.exports = { read_Diretory, exec_Extract_Siege, openDialog, readTreeStructure, openExplorer, start_Siege};

@@ -1,19 +1,20 @@
 import os
+import stat
 import re
 import sys
-import stat
 import tarfile
 import zipfile
 import subprocess
 import platform
 import yara
 import socket
-import multiprocessing
 import csv
-from concurrent.futures import ThreadPoolExecutor
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import List, Dict, Tuple, Union
+
+INVALID_CHARS = '<>:"\\|?*'
+
 def is_wsl():
     try:
         with open("/proc/version", "r") as f:
@@ -52,7 +53,7 @@ class FileHandler:
         except Exception as e:
             print(f"실행 중 에러 발생: {e}")
     
-    def get_file_lines(file_path: str) -> None:
+    def get_file_lines(file_path: str) -> List:
         try:
             with open(file_path, "r", encoding="utf-8") as file:
                 content = [line.strip() for line in file]
@@ -102,6 +103,27 @@ class FileHandler:
         ]
     
     @staticmethod
+    def get_file_with_keyword(directory_path:str, keyword:str) -> List[str]:
+        matching_files = []
+        for root, _, files in os.walk(directory_path):
+            for file in files:
+                if keyword in file:
+                    matching_files.append(os.path.join(root, file))
+
+        return matching_files
+    
+    @staticmethod
+    def get_file_with_keywords(directory_path:str, keywords:List) -> List[str]:
+        matching_files = []
+
+        for root, _, files in os.walk(directory_path):
+            for file in files:
+                if any(keyword in file for keyword in keywords):  # 키워드 중 하나라도 포함
+                    matching_files.append(os.path.join(root, file))
+
+        return matching_files
+
+    @staticmethod
     def filter_files_by_keyword(file_list:List[str], keyword):
         return [file for file in file_list if keyword in file]
     
@@ -120,6 +142,11 @@ class FileHandler:
 
 
 class PathConverter:
+    @staticmethod
+    def sanitize_filename(filename: str) -> str:
+        for char in INVALID_CHARS:
+            filename = filename.replace(char, "_")  # 대체 문자 지정
+        return filename
     @staticmethod
     def convert_windows_to_wsl_path(file_path: str) -> str:
         drive, rest_of_path = file_path.split(':', 1)
@@ -192,6 +219,22 @@ class CommandRunner:
                 stderr=subprocess.PIPE,
             )
             return result.returncode, result.stdout.decode("utf-8"), result.stderr.decode("utf-8")
+        except Exception as e:
+            return -1, "", str(e)
+        except subprocess.TimeoutExpired:
+            return -1, "", "TimeoutExpired"
+        
+    @staticmethod
+    def run_wsl_command_with_input(command: List[str],input: str) -> Tuple[int, str, str]:
+        try:
+            result = subprocess.run(
+                command,
+                input=input,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            return result.returncode, result, result.stderr
         except Exception as e:
             return -1, "", str(e)
         except subprocess.TimeoutExpired:
@@ -363,7 +406,7 @@ class CompressedFileInspector:
 
     def __find_keywords_compressed_files(self, file_path:str, keywords:List[str], mode) -> List[str]:
 
-        matching_files = [name for name in self.__get_all_files_from_compressed(file_path,mode) if any(keyword in name for keyword in keywords)]
+        matching_files = [(name,perm) for name,perm in self.__get_all_files_from_compressed(file_path,mode) if any(keyword in name for keyword in keywords)]
         return matching_files
     
     @staticmethod
@@ -377,11 +420,10 @@ class CompressedFileInspector:
 
             elif file_path.endswith(('.tar', '.tar.gz')):
                 with tarfile.open(file_path, mode) as tar:
-                    all_files =  tar.getnames() 
+                    all_files = [(member.name,member.mode) for member in tar.getmembers() ]
                 
         except Exception as e:
             print(f"Error processing file {file_path}: {e}")
-        
         return all_files
     
     def get_all_files(self) -> Dict[str, List[str]]:
@@ -405,33 +447,33 @@ class CompressedFileInspector:
             "keyword_found": [],
             "errors": None
         }
-
         keyword_files = self.__find_keywords_compressed_files(file_path, keywords, mode)
-
         try:
             if file_path.endswith('.zip'):
                 for spec_file in keyword_files:
                     with zipfile.ZipFile.open(spec_file) as file:
                         result["keyword_found"].append({
                             "file_name": spec_file,
+                            "file_mode" : 0,
                             "content": file.read().decode(encoding="utf-8").splitlines()
                         })
 
             elif file_path.endswith(('.tar', '.tar.gz')):
                 with tarfile.open(file_path, mode) as tar:
                     for spec_file in keyword_files:
-                        with tar.extractfile(spec_file) as file:
+                        # print(spec_file.name , spec_file.mode)
+                        with tar.extractfile(spec_file[0]) as file:
                             # NOTE: 바이너리 파일이면 따로 처리 해줘야함
                             # NOTE: 이부분 아마 yara파일로 탐지할거면 중간에 지우는게 나을듯?
                             content = StringExtractor.convert_binary_data_to_string(file.read())
                             result["keyword_found"].append({
-                                "file_name": spec_file,
+                                "file_name": spec_file[0],
+                                "file_mode" : oct(spec_file[1])[2:],
                                 "content": content
                             })
 
         except Exception as e:
             result["errors"] = str(e)
-        
         return result
     
     def scan_compress_file_with_yara(self,compress_file_path:str, yara_rule):
@@ -458,9 +500,9 @@ class CompressedFileInspector:
                         # YARA로 검사
                         matches = yara.compile(filepath=yara_rule).match(data=file.read())
                         if matches:
-                            print(f"Found match in: {member.name}")
+                            print(f"Found match: file_mode={oct(member.mode)[2:]} file_name={member.name}")
                         else:
-                            print(f"No match in: {member.name}")
+                            print(f"No match: file_mode={oct(member.mode)[2:]} file_name={member.name}")
 
     def inspect_compressed_files(self, keywords) -> List[Dict]:
         compressed_files = self.__find_compressed_files()
@@ -480,7 +522,7 @@ class CompressedFileInspector:
         for file_path in compressed_files:
             ext = os.path.splitext(file_path)[-1].lower()
             mode = "r:gz" if ext == ".tar.gz" else 'r'
-            files_cont_spec_keywords = self.__find_keywords_compressed_files(file_path, keywords, mode)
+            files_cont_spec_keywords = self.__find_keywords_compressed_files(file_path, keywords, mode)[0]
 
         return files_cont_spec_keywords
     
@@ -502,7 +544,6 @@ class KeywordChecker:
         return False
 
 class Unpacker():
-
     @staticmethod
     def unpack_tar_file_on_windows(compress_file_path:str):
         unpack_exec_list = ["powershell", "tar", "-xvzf", compress_file_path]
@@ -513,22 +554,45 @@ class Unpacker():
         else:
             print(f"Occured Error {stderr}")
 
+    #NOTE: 만약에 /Extract 디렉토리 이름이 바뀔수도 있으니 동적으로 바꾸는 방법이나 되게 하는 방법을 생각해볼 필요가 있음
     @staticmethod
-    def unpack_tar_file_on_windows(compress_file_path:str):
+    def unpack_tar_file_on_wsl(compress_file_path:str, dir_path:str):
         compress_file_path = PathConverter.convert_windows_to_wsl_path(compress_file_path)
-        unpack_exec_list = ["wsl", "-e", "tar", "-xvzf", compress_file_path]
+        dir_path = PathConverter.convert_windows_to_wsl_path(dir_path)+"/Extract"
+        unpack_exec_list = ["wsl", "-e", "tar", "-zxvf", compress_file_path, "-C", dir_path]
         returncode, stdout, stderr = CommandRunner.run_wsl_command(unpack_exec_list)
-
+        
         if returncode == 0:
             print(f"Completed fileExtract {stdout}")
         else:
             print(f"Occured Error {stderr}")
+            
+    @staticmethod
+    def unpack_tar_file_on_python(compress_file_path:str, extract_to:str):
+        with tarfile.open(compress_file_path, "r:*") as tar:
+            for member in tar.getmembers():
+                original_name = member.name  
+                sanitized_name = PathConverter.sanitize_filename(original_name)
+                
+                member.name = sanitized_name
+                tar.extract(member, path=extract_to, numeric_owner=True) 
+
+                print(f"파일 uid: {member.uid} 파일 gid:{member.gid} 파일 권한 : {oct(member.mode)[2:]} 파일 크기 : {member.size}")
+                print(f"추출 완료: {extract_to + PathConverter.convert_wsl_to_windows_path(sanitized_name)}",end='\n\n')
 
 class Spliter():
 
     def split_file_content(file_list:List[str]) -> None:
         for file in file_list:
             print(file)
+
+    def split_tar_file_name(file_path: str) -> str:
+        file_name = os.path.basename(file_path)
+        name_without_ext = os.path.splitext(file_name)[0]
+
+        return name_without_ext
+
+
 
 class RegexUtils:
 
@@ -548,6 +612,17 @@ class RegexUtils:
                             matches.append(line.strip())
         except (FileNotFoundError, UnicodeDecodeError):
             pass
+        return matches
+
+    @staticmethod
+    def grep_matched_compreessed_files(tar_file, regex_patterns:list[str]):
+        matches = []
+        if tar_file:
+            for line in tar_file:
+                line = line.decode(errors="ignore").strip()
+                for pattern in regex_patterns:
+                    if re.search(pattern, line, re.IGNORECASE):
+                        matches.append(line.strip())
         return matches
 
 class HashSearcher():
@@ -575,38 +650,6 @@ class HashSearcher():
         except Exception as e:
             print(f"Error reading file {passwd_file_path}: {e}")
         return []
-    
-    @staticmethod
-    def split_hash_info(hash_data:str) -> list[str]:
-        valid_data = {
-            '1': "MD5",
-            '5': "SHA256",
-            '6': "SHA512",
-            '2a': "bcrypt",
-            '2y': "bcrypt",
-            'y': "yescrypt"
-        }
-
-        info_data = hash_data.split(':')
-        
-        username = info_data[0]
-        hash_value = info_data[1]
-        last_change_period = info_data[2]
-        min_use_period = info_data[3]
-        max_use_period = info_data[4]
-        warning_period_period = info_data[5]
-        deactivate_period = info_data[6]
-        account_expiration_period = info_data[7]
-        reservestion_field = info_data[8]
-        
-
-        hash_info = hash_value.split('$')
-        algorithm = valid_data.get(hash_info[1],"Invaild_data")
-
-        salt = hash_info[2]
-        hash_value_with_salt = hash_info[3]
-
-        return [username, algorithm, salt, hash_value_with_salt, last_change_period, min_use_period, max_use_period, warning_period_period, deactivate_period, account_expiration_period, reservestion_field]
 
 
 class PasswordFilesChecker():
@@ -643,81 +686,98 @@ class PasswordFilesChecker():
         except (FileNotFoundError, IndexError):
             return []
     
-    #FIXME - 아직 안됌..... 좀 더 수정해야할듯함 문제는 정규식 적용이안됌
-    # NOTE: 현재 일반 파일 기준이므로 압축 파일 내부에서 확인하려면 로직 바꿔야함
-    # 아마 사용하지 않을듯 함
-    """
-    It's based on the current test Text file, so you need to change logic to check inside the compressed file
-    """
-    # def deep_password_search(self):
-    #     """
-    #     Perform a deep search for password hashes in files within the specified directory.
+    @staticmethod
+    def crack_password_list(firm_ware_dir: str, word_list_file:str):
+        word_list_file = PathConverter.convert_windows_to_wsl_path(word_list_file)
+
+        crypt_list = ["descrypt","bsdicrypt","md5crypt","bcrypt","LM","AFS","tripcode","dummy","crypt"]
+        target_files = ["./etc/shadow","./etc/passwd","/default/passwd"]
+        crack_result_data = []
+        tar_path = FileHandler.get_files_endingwith(firm_ware_dir,'tar.gz')[0]
+
+        with tarfile.open(tar_path, "r") as tar:
+        # 특정 파일 찾기
+            related_files_with_passwd = [member.name for member in tar.getmembers() if member.name in target_files]
+            for target_file in related_files_with_passwd:
+                file_obj = tar.extractfile(target_file)
+                if file_obj:
+                    content = file_obj.read().decode('utf-8')
+                    save_path = f"{firm_ware_dir}\\temp_file.txt"
+                    try:
+                        with open(save_path,'w') as file:
+                            file.write(content)
+                    except Exception as e:
+                        print(f"파일 저장 중 오류발생 {e}")
+                        if os.path.exists(save_path):
+                            os.remove(save_path)
+                            print(f"{save_path} 파일 삭제")
+                    save_path = PathConverter.convert_windows_to_wsl_path(save_path)
+                    for crypt_type in crypt_list:
+                        crack_command = ["wsl", "john", f"--format={crypt_type}", f"--wordlist={word_list_file}", save_path]
+                        _, crack_stdout, _ = CommandRunner.run_wsl_command(crack_command)
+                        if "Loaded" in crack_stdout:
+                            show_command = ["wsl", "john", "--show", save_path]
+                            _, show_stdout,_ = CommandRunner.run_wsl_command(show_command)
+                            matches_result = re.search(r"(\d+) password hashes cracked",show_stdout)
+                            if matches_result:
+                                cracked_count = int(matches_result.group(1))
+                                if cracked_count > 0:
+                                    print("cracked password")
         
-    #     :param firmware_path: Path to search for files.
-    #     :param config_file: Path to the password regex configuration file.
-    #     :param tmp_dir: Directory to store temporary files.
-    #     """
+        save_path = f"{firm_ware_dir}\\temp_file.txt"
+        if os.path.exists(save_path):
+            os.remove(save_path)
+            print(f"{save_path} 파일 삭제")
 
-    #     regex = re.compile("|".join(self.patterns))
-
-    #     password_hashes = []
-
-    #     # Search function
-    #     def search_file(file_path:str) -> Union[List[Tuple[str,str]],List[str]]:
-    #         matches = []
-    #         try:
-    #             with open(file_path, "r", errors="ignore") as f:
-    #                 for line in f:
-    #                     if regex.search(line):
-    #                         matches.append((file_path, line.strip()))
-    #         except Exception as e:
-    #             print(f"Error reading file {file_path}: {e}")
-    #         return matches
-
-    #     # Find all files
-    #     #FIXME - Must delete.... It's just Testing code
-    #     test_path = self.base_path
-
-    #     # FIXME: 2025-01-31 사용용도를 compressed 파일기준으로 바꿔야할 수 도 있음
-    #     file_list = [
-    #         os.path.join(root, file)
-    #         for root, _, files in os.walk(test_path)
-    #         for file in files
-    #     ]
-        
-    #     # Search files concurrently
-    #     with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
-    #         results = executor.map(search_file, file_list)
-        
-    #     # Write results to temp file
-    #     for result in results:
-    #         if result:
-    #             for file_path, match_file_data in result:
-    #                 password_hashes.append((file_path, match_file_data))
-
-    #     # Print and log results
-    #     if password_hashes:
-    #         print("[+] Found the following password hash values:")
-    #         for file_path, hash_value in password_hashes:
-    #             print(f"[+] PATH: {file_path} - Hash: {hash_value}")
-    #         print(f"[*] Found {len(password_hashes)} password hashes.")
-    #     else:
-    #         print("[*] No password hashes found.")
-    #     return password_hashes
+        return crack_result_data
     
     @staticmethod
-    def crack_password_list(word_list_file:str, op_file:str):
+    def crack_password_list2(firm_ware_dir: str, word_list_file:str):
         word_list_file = PathConverter.convert_windows_to_wsl_path(word_list_file)
-        op_file = PathConverter.convert_windows_to_wsl_path(op_file)
-        crack_command = ["wsl", "john", "--format=crypt", f"--wordlist={word_list_file}", op_file]
-        result = CommandRunner.run_wsl_command(crack_command)
-        print(result)
+
+        crypt_list = ["descrypt","bsdicrypt","md5crypt","bcrypt","LM","AFS","tripcode","dummy","crypt"]
+        target_files = FileHandler.get_file_with_keywords(firm_ware_dir,["passwd","shadow"])
+        crack_result_data = []
+        tar_path = FileHandler.get_files_endingwith(firm_ware_dir,'tar.gz')[0]
+
+        
+        for target_file in target_files:
+            try:
+                with open(target_file, 'r', encoding='utf-8') as file:
+                    content = file.read()
+                save_path = f"{firm_ware_dir}\\temp_file.txt"
+                with open(save_path,'w') as file:
+                    file.write(content)
+            except Exception as e:
+                print(f"파일 저장 중 오류발생 {e}")
+                if os.path.exists(save_path):
+                    os.remove(save_path)
+                    print(f"{save_path} 파일 삭제")
+            save_path = PathConverter.convert_windows_to_wsl_path(save_path)
+            for crypt_type in crypt_list:
+                crack_command = ["wsl", "john", f"--format={crypt_type}", f"--wordlist={word_list_file}", save_path]
+                _, crack_stdout, _ = CommandRunner.run_wsl_command(crack_command)
+                if "Loaded" in crack_stdout:
+                    show_command = ["wsl", "john", "--show", save_path]
+                    _, show_stdout,_ = CommandRunner.run_wsl_command(show_command)
+                    matches_result = re.search(r"(\d+) password hashes cracked",show_stdout)
+                    if matches_result:
+                        cracked_count = int(matches_result.group(1))
+                        if cracked_count > 0:
+                            print("cracked password")
+        
+        save_path = f"{firm_ware_dir}\\temp_file.txt"
+        if os.path.exists(save_path):
+            os.remove(save_path)
+            print(f"{save_path} 파일 삭제")
+
+        return crack_result_data
     
     @staticmethod
     def check_cracked_file(op_file:str):
         op_file = PathConverter.convert_windows_to_wsl_path(op_file)
 
-        check_command = ["wsl", "john", "--show",op_file]
+        check_command = ["wsl", "john", "--show", op_file]
         cracked_file_result = CommandRunner.run_wsl_command(check_command)
         user_list = StringExtractor.extract_keyword_from_output(r"password hash cracked",cracked_file_result[1])
         print(user_list)
@@ -725,27 +785,20 @@ class PasswordFilesChecker():
     
     # root.tar.gz 기준으로 바꾸기
     def analyze_password_files(self,dir_path:str):
-        file_list = FileHandler.get_file_list(dir_path)
-        pass_files = FileHandler.filter_files_by_keywords(file_list,["passwd","shadow"])
-        print(pass_files)
-        print(f"[+] Found {len(pass_files)} password-related files:")
-        for file_path in pass_files:
-            print(f"  {file_path}")
-            try:
-                if os.path.isfile(file_path):
-                    possible_passwords = RegexUtils.grep_matched_files(
-                        file_path, [r"^[a-zA-Z0-9]+:[a-zA-Z0-9!#$%&'()*+,-./:;<=>?@[\\\]^_`{|}~]*:[0-9]+:[0-9]+(:[^:]*){3}$"]
-                    )
-                    possible_shadows = RegexUtils.grep_matched_files(
-                        file_path, [r"^[a-zA-Z0-9]+:\$[0-9a-z]\$.*:[0-9]+:[0-9]+:[0-9]+([^:]*:){4}[^:]*"]
-                    )
-                    root_accounts = self.find_root_accounts(file_path)
-                    if root_accounts:
-                        print("[+] Identified the following root accounts:")
-                        for account in root_accounts:
-                            print(f"  {account}")
+        #NOTE: 이 tar의 이름이 달라질 수 도 있음
+        compress_file_path = f"{dir_path}\\Extract\\rootfs0.tar.gz"
+        possible_passwords = []
+        possible_shadows = []
+        try:
+            with tarfile.open(compress_file_path, "r") as tar:
+                for member in tar.getmembers():
+                    if member.isfile():
+                        file = tar.extractfile(member.name)
+                        possible_passwords = RegexUtils.grep_matched_compreessed_files(file,[r"^[a-zA-Z0-9]+:[a-zA-Z0-9!#$%&'()*+,-./:;<=>?@[\\\]^_`{|}~]*:[0-9]+:[0-9]+(:[^:]*){3}$"])
+                        possible_shadows = RegexUtils.grep_matched_compreessed_files(file,[r"^[a-zA-Z0-9]+:\$[0-9a-z]\$.*:[0-9]+:[0-9]+:[0-9]+([^:]*:){4}[^:]*"])
 
                     if possible_passwords or possible_shadows:
+                        print(f"[+] Found password-related files:{possible_passwords} , {possible_shadows}")
                         print("[+] Found possible passwords or weak configurations:")
                         if possible_shadows:
                             print("  Shadows:")
@@ -753,10 +806,11 @@ class PasswordFilesChecker():
                                 print(f"    {shadow}")
                         if possible_passwords:
                             print("  Passwords:")
-                            for password in possible_passwords:
-                                print(f"    {password}")
-            except Exception as e:
-                """Test line"""
+                            for passwd in possible_passwords:
+                                print(f"    {passwd}")
+                        possible_passwords.clear()
+                        possible_shadows.clear()
+        except Exception as e:
                 print(f"Exception = {e}")
                 pass
 
@@ -766,46 +820,6 @@ class PasswordFilesChecker():
             for sudoer in sudoers_paths:
                 print(f"  {sudoer}")
     
-    # #NOTE - 사용하지 않을 듯 함
-    # @staticmethod
-    # def check_password_in_chunk(wordlist_chunk, hashed_password):
-    #     for input_password in wordlist_chunk:
-    #         if crypt.crypt(input_password.strip(), hashed_password) == hashed_password:
-    #             return input_password.strip()
-    #     return None
-
-    # # Wordlist를 여러 프로세스로 나눠 처리
-    # def check_password_wordlist_parallel(self,wordlist_path, hashed_password, num_processes=4) -> str:
-    #     try:
-    #         with open(wordlist_path, 'r') as wordlist:
-    #             passwords = wordlist.readlines()
-            
-    #         chunk_size = len(passwords) // num_processes
-    #         chunks = [passwords[i * chunk_size:(i + 1) * chunk_size] for i in range(num_processes)]
-            
-    #         with multiprocessing.Pool(num_processes) as pool:
-    #             password_check_results = pool.starmap(self.check_password_in_chunk, [(chunk, hashed_password) for chunk in chunks])
-            
-    #         for check_result in password_check_results:
-    #             if check_result:
-    #                 return check_result
-    #     except FileNotFoundError:
-    #         print("Wordlist 파일을 찾을 수 없습니다.")
-    #     return "None"
-    
-    #NOTE: hash 비교하는것만 넣어놨음
-    # john the ripper 사용하는게 나을 것 같다하심
-    # def check_passwd_strength(self) -> bool:
-
-    #     password_hases_data = self.deep_password_search()
-
-    #     for _, hash_value in password_hases_data:
-    #         hash_info = HashSearcher.split_hash_info(hash_value)
-    #         # NOTE: 2025-01-31 if문 추가 패스워드 사용규칙을 포함하여 분기문 추가
-    #         algorithm = hash_info[1]
-    #         if algorithm == 'MD5':
-    #             return True
-    #     return False
     
 def check_rw(output_dir: str, keyword="rw") -> bool:
     """Main function to check for 'rw' in the content of compressed files."""
@@ -863,10 +877,10 @@ def slice_fstab_file(compress_instance: CompressedFileInspector):
     compressed_file_list = compress_instance.inspect_compressed_files(["fstab"])
     if compressed_file_list:
         print("[+] Found fstab keyword file")
+        print(compressed_file_list)
         for compressd_file in compressed_file_list:
-            print("file_path =",compressd_file["file_path"])
             for fstab_file in compressd_file['keyword_found']:
-                print("file_name = ", compressd_file["file_path"]+PathConverter.convert_wsl_to_windows_path(fstab_file["file_name"]))
+                print("file_mode :", fstab_file["file_mode"], "file_name = ", compressd_file["file_path"]+PathConverter.convert_wsl_to_windows_path(fstab_file["file_name"]))
                 fstab_content = fstab_file['content'].strip().split()
                 for i in range(0,len(fstab_content),6):
                     content_list = []
@@ -879,6 +893,123 @@ def slice_fstab_file(compress_instance: CompressedFileInspector):
                     dump = content_list[4]
                     pass_option = content_list[5]
                     print(device, mount_flag , file_system_type, mount_option, dump, pass_option)
+        
+        # for compressed_file in compressed_file_list:
+        #     print("[+] Found fstab keyword file")
+        #     print(compressed_file)
+        #     print("file_path =", compressed_file["file_path"])
+
+        #     for fstab_file in compressed_file["keyword_found"]:
+        #         file_path = compressed_file["file_path"] + PathConverter.convert_wsl_to_windows_path(fstab_file["file_name"])
+        #         print("file_mode :", fstab_file["file_mode"], "file_name = ", compressed_file["file_path"]+PathConverter.convert_wsl_to_windows_path(fstab_file["file_name"]))
+        #         fstab_lines = fstab_file["content"].strip().split("\n")
+        #         for line in fstab_lines:
+        #             # 주석 제거 및 빈 줄 무시
+        #             line = line.strip()
+        #             if not line or line.startswith("#"):
+        #                 continue
+
+        #             # 공백을 기준으로 필드 분할
+        #             fields = line.split()
+                    
+        #             # 필드 개수가 3개 이상일 경우만 처리 (최소 `device mount_point type` 필요)
+        #             if len(fields) < 3:
+        #                 print("[!] Warning: Unexpected line format:", line)
+        #                 continue
+
+        #             # 필드가 6개 미만이면 기본값 추가 (fstab에서 일부 필드는 생략 가능)
+        #             while len(fields) < 6:
+        #                 fields.append("0")  # 기본값 추가
+
+        #             device, mount_flag, file_system_type, mount_option, dump, pass_option = fields[:6]
+        #             print(device, mount_flag, file_system_type, mount_option, dump, pass_option)
+
+def make_tar_dir(tar_file:str) -> str:
+    compress_direct_dir = os.path.dirname(tar_file)
+    if os.path.isdir(compress_direct_dir):
+        maked_compress_dir = compress_direct_dir+"\\"+Spliter.split_tar_file_name(tar_file)
+        try:
+            if not os.path.exists(maked_compress_dir):
+                os.mkdir(maked_compress_dir)
+            return maked_compress_dir
+        except FileNotFoundError as e:
+            print(f"파일 생성중 오류 발생 : {e}")
+        except Exception as e:
+            print(f"예상치 못한 에러 발생 : {e}")
+    return ""
+
+def print_inspect_info(comp_instance: CompressedFileInspector,keyowords: List[str]):
+    info = comp_instance.inspect_compressed_files(keyowords)
+    for info_data in info:
+        for file_data in info_data["keyword_found"]:
+            print("file_path = {} file_mode = {}".format(file_data['file_name'],file_data['file_mode']))
+
+def print_fstab_info(dir_path:str):
+    keywords_file_list = FileHandler.get_file_with_keywords(dir_path,["fstab"])
+    if keywords_file_list:
+        for file in keywords_file_list:
+            file_content = FileHandler.get_file_lines(file)
+            print(file_content)
+
+def get_device_info(file_path: str) -> Dict:
+    try:
+        # Read the file content
+        with open(file_path, "r", encoding='utf-8') as file:
+            output = file.read().strip()
+
+        # Split sections by "|"
+        sections = output.split("|")
+
+        # Initialize data dictionary
+        data = {
+            "CPU Architecture": "Unknown",
+            "Endianness": "Unknown",
+            "OS": "Unknown",
+            "Library": "Unknown",
+            "EABI Version": "Unknown",
+        }
+
+        # Extract OS (Linux Kernel Version)
+        if "Linux kernel version" in sections[2]:
+            data["OS"] = sections[2]  # Example: "Linux kernel version 2.6.36"
+
+        # Extract ELF format details
+        elf_info = sections[3]  # Example: "ELF 32-bit LSB executable, MIPS, MIPS32 rel2 version 1 (SYSV), dynamically linked, interpreter /lib/ld-uClibc.so.0, stripped"
+
+        # Determine Endianness
+        if "LSB" in elf_info:
+            data["Endianness"] = "Little Endian"
+        elif "MSB" in elf_info:
+            data["Endianness"] = "Big Endian"
+
+        # Extract CPU Architecture
+        arch_parts = elf_info.split(", ")
+        for part in arch_parts:
+            if "MIPS32" in part:
+                data["CPU Architecture"] = part.strip()
+            elif "MIPS" in part:
+                data["CPU Architecture"] = "MIPS (Generic)"
+
+        # Extract EABI Version (Finding "EABI" in text)
+        for part in arch_parts:
+            if "EABI" in part:
+                data["EABI Version"] = part.split()[0]  # Example: Extract "EABI5"
+
+        # Extract Library (Interpreter)
+        if "interpreter" in elf_info:
+            lib_part = elf_info.split("interpreter")[-1].strip().split(",")[0]
+            if "uClibc" in lib_part:
+                data["Library"] = "uClibc (Embedded system)"
+            elif "glibc" in lib_part:
+                data["Library"] = "glibc (Standard Linux)"
+            elif "musl" in lib_part:
+                data["Library"] = "musl (Lightweight C library)"
+
+        return data
+    
+    except Exception as e:
+        return {"error": str(e)}
+
 def main() :
     ## 1. 커널 추출 시 EoS(End of Service) 버전인지 점검
 
@@ -886,18 +1017,36 @@ def main() :
     print("\n커널 추출 시 EoS(End of Service) 버전인지 점검\n")
     window_path = sys.argv[1]
     mac_path = "Your mac path"
-    kernel_inspector = KernelInspector(window_path)
 
-    kernel_inspector.extract_versioninfo_from_log_file()
+    #NOTE: 다른이름의 tar.gz파일이 들어올 수도 있음 이게 문제임 ....
+    root_tar_file = FileHandler.get_files_endingwith(window_path,'tar.gz')[0]
+    if root_tar_file:
+        unpacked_dir = make_tar_dir(root_tar_file)
+        if unpacked_dir:
+            Unpacker.unpack_tar_file_on_python(root_tar_file,unpacked_dir)
+
+    #NOTE: 2025-02-17 압축을 푸는것까지 완료했음 이름이랑, 정보 뿌리는거 해결할것 그리고 전체적으로 구조를 바꿔야댐
+    kernel_inspector = KernelInspector(window_path)
+    
+    # 인터넷 안될 때는 가지고 있는 version_list를 기준으로 파악한다
+    kernel_latest = kernel_inspector.extract_versioninfo_from_log_file()
+    if kernel_latest:
+        if InternetHelper.is_internet_connected():
+            result = kernel_inspector.check_eos_status(kernel_latest)
+            print(result)
+        else:
+            kernel_list = FileHandler.get_file_lines("C:\\Users\\raon\\Park\\electron-app\\siege\\kernel_version_list")
+            kernel_list.append(kernel_latest)
+            kernel_list.sort()
+            if kernel_list[0] == kernel_latest:
+                print("EOS")
 
     #방법2
     print("\n/etc/passwd 및 /etc/shadow 파일 존재 시 추측하기 쉬운 비밀번호를 사용 중인지 점검\n")
 
-    #방법3 - log 기준으로 하기
-
     ## 2. /etc/passwd 및 /etc/shadow 파일 존재 시 추측하기 쉬운 비밀번호를 사용 중인지 점검
-
-    pass_data = FileHandler.filter_files_by_keywords(FileHandler.get_file_list(window_path),["passwd"])
+    #NOTE: passwordlist를 wsl 설치 패키지 내에 포함해야할 수도 있음
+    password_list = "C:\\Users\\raon\\Park\\electron-app\\siege\\passwordlist.txt"
     path_file = ""
     if platform.system() == "Windows":
         path_file = window_path
@@ -907,101 +1056,55 @@ def main() :
         path_file = PathConverter.convert_windows_to_wsl_path(window_path)
 
     passwordchecker = PasswordFilesChecker(path_file)
+    print(PasswordFilesChecker.crack_password_list(path_file,password_list))
 
     # NOTE: 2025-01-29 /etc/login.defs에서 확인 해야함
-    check_login_file = FileHandler.filter_files_by_keywords(FileHandler.get_file_list(path_file),["login.defs"])
-    if check_login_file:
-        file_reuslt = RegexUtils.grep_matched_files(check_login_file[0],[r"PASS_MIN",r"PASS_MAX"])
-        print(file_reuslt)
-
-    print("해시 알고리즘 탐색")
-
-    # if passwordchecker.check_passwd_strength():
-    #     print("MD5 알고리즘 탐색 => 취약")
     
-    # found_pasword = passwordchecker.check_password_wordlist_parallel(word_list,password)
-
-    wsl_check_py = PathConverter.convert_windows_to_wsl_path("C:\\Users\\raon\\Park\\electron-app\\siege\\passcheck.py")
-
-    result_code = CommandRunner.run_wsl_command(["wsl","-e","python3",wsl_check_py])
-
-    if result_code[0] == 0:
-        print("현재 워드리스트에서 비밀번호가 탐색됨")
-        print(f"탐색된 비밀번호 - > {result_code[1]}")
-
     #TODO - 실제는 압축풀린곳에서 시작
+
+    comp_inspector = CompressedFileInspector(path_file)
 
     """
     #NOTE: 압축 풀린곳에서 inspector로 키워드가 존재하는 파일의 output이 출력이 가능하고 
     # 그 해당 output에서 regex를 이용하여 특정 키워드가 존재하는지 파악가능
     """
+
     ## 3. fstab 파일 존재 시 중요 파일시스템의 쓰기 허용 여부 점검
     print("\nfstab 파일 존재 시 중요 파일시스템의 쓰기 허용 여부 점검\n")
     print("rw 테스트")
-    test_fstab = FileHandler.filter_files_by_keywords(FileHandler.get_file_list(path_file),["fstab"])
-    print(test_fstab)
-
-    if test_fstab:
-        fstab_test = StringExtractor.extract_keyword_from_output(r"rw",FileHandler.get_file_data(test_fstab[0]))
-        if fstab_test:
-            print("내부 rw 탐지")
-
-    if check_rw(window_path):
-        print(f"rw 탐지")
-    else:
-        print(f"없음")
-    
+    print_inspect_info(comp_inspector,["fstab"])
+    print_fstab_info(path_file)
     ## 4. 추출된 파일 내에 cloud 및 다른 디바이스, 시스템 접속 인증 정보 포함 여부 점검
     # config_file_list = FileHandler.filter_files_by_keywords(extract_file_list,["id_rsa",".pem",".crt","shadow"])
     print("\n추출된 파일 내에 cloud 및 다른 디바이스, 시스템 접속 인증 정보 포함 여부 점검")
 
-    cloud_related_file = [
-        "mysqld.cnf","login","redis.conf","mongod.conf","docker","daemon.json","sshd_config","etcd.yaml","glance-api.conf","glance",
+    cloud_related_files = [
+        "mysqld.cnf","login_def","redis.conf","mongod.conf","docker","daemon.json","sshd_config","etcd.yaml","glance-api.conf","glance",
         "schema","system-auth","pwquality.conf","common-password","system-auth","aws","credentials","gcloud","credentials.db", "config_default",
         ".azure", ".bluemix", ".oci", "doctl", ".aliyun", "linode-cli","openstack", "hcloud", ".tencentcloudcli",".pem", "authorized_keys",
         "id_dsa", "id_rsa", ".crt","pg_hba.conf","aws","gcloud"
     ]
 
-    compress = CompressedFileInspector(window_path)
-
-    cloud_file = FileHandler.filter_files_by_keywords(FileHandler.get_file_list(path_file),cloud_related_file)
-    print(f"로컬 테스트 -> {cloud_file}")
-    related_files = compress.inspect_compressed_files(cloud_related_file)
-    print("압축 파일에서 찾기 - >",related_files)
-    if related_files:
-        checkpass = StringExtractor.extract_keyword_from_output(r"password",related_files[0]["keyword_found"][0]["content"])
-        if checkpass:
-            print("내부 비밀번호 탐지")
-
-    # 5. 디바이스 기본 정보 및 추출된 디렉터리 및 파일 제공
-    print("\n디바이스 기본 정보 및 추출된 디렉터리 및 파일 제공\n")
+    compress = comp_inspector
 
     model_info = ["device","Device","info","Info"]
     print(compress.get_keyword_files_from_compressed(model_info))
     
-    # 인터넷 안될 때는 가지고 있는 version_list를 기준으로 파악한다
-    kernel_latest = kernel_inspector.extract_versioninfo_from_log_file()
-    if kernel_latest:
-        if InternetHelper.is_internet_connected():
-            result = kernel_inspector.check_eos_status(kernel_latest)
-            print(result)
-        else:
-            comp_list = []
-            kernel_list = FileHandler.get_file_lines("C:\\Users\\raon\\Park\\electron-app\\siege\\kernel_version_list")
-            for kernel_version in kernel_list:
-                comp_list.append(kernel_version.strip())
-            comp_list.append(kernel_latest)
-            comp_list.sort()
-            if comp_list[0] == kernel_latest:
-                print("EOS")
-
     passwordchecker.analyze_password_files(path_file)
     slice_fstab_file(compress)
     
-    test_dsf = FileHandler.filter_files_by_keywords(FileHandler.get_file_list(path_file),["shadow","passwd"])
-    for test_file in test_dsf:
-        PasswordFilesChecker.crack_password_list("C:\\Users\\raon\\Park\\electron-app\\siege\\passwordlist.txt",test_file)
-    compress.scan_compress_file_with_yara(FileHandler.get_files_endingwith(path_file,'tar.gz')[0],"C:\\Users\\raon\\Park\\electron-app\\yara\\signatures.yar")
+    checked_yar_file = "C:\\Users\\raon\\Park\\electron-app\\yara\\generic.yar"
+    signatures_yar_file = "C:\\Users\\raon\\Park\\electron-app\\yara\\signatures.yar"
+    compress.scan_compress_file_with_yara(FileHandler.get_files_endingwith(path_file,'tar.gz')[0],checked_yar_file)
+    compress.scan_compress_file_with_yara(FileHandler.get_files_endingwith(path_file,'tar.gz')[0],signatures_yar_file)
+
+    # Device 정보
+    result_log_path = path_file+"\\extract_result"
+    print(get_device_info(result_log_path))
+    # with open(result_log_path,"r",encoding='utf-8') as file:
+    #     content = file.read()
+    #     print(content)
 
 if __name__ == "__main__":
     main()
+    

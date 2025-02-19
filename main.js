@@ -2,12 +2,12 @@ const { app, BrowserWindow, ipcMain, protocol, session } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const {
-    readdiretory,
-    exec_extract_siege,
+    read_Diretory,
+    exec_Extract_Siege,
     openDialog,
     readTreeStructure,
-    open_explorer,
-    start_siege
+    openExplorer,
+    start_Siege
 } = require("./handler");
 
 let mainWindow;
@@ -37,11 +37,11 @@ app.whenReady().then(() => {
 
     ipcMain.handle("select-file", () => openDialog("file"));
     ipcMain.handle("select-directory", () => openDialog("directory"));
-    ipcMain.handle("get-directory-contents", readdiretory);
+    ipcMain.handle("get-directory-contents", read_Diretory);
     ipcMain.handle("get-tree-contents", readTreeStructure);
-    ipcMain.on("exec-siege", exec_extract_siege);
-    ipcMain.on("open-exploer",open_explorer);
-    ipcMain.on("generate-siege",start_siege);
+    ipcMain.on("exec-siege", exec_Extract_Siege);
+    ipcMain.on("open-exploer",openExplorer);
+    ipcMain.on("generate-siege",start_Siege);
 
     app.on("ready", () => {
         session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
