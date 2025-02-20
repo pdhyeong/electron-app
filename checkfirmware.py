@@ -569,16 +569,44 @@ class Unpacker():
             
     @staticmethod
     def unpack_tar_file_on_python(compress_file_path:str, extract_to:str):
-        with tarfile.open(compress_file_path, "r:*") as tar:
-            for member in tar.getmembers():
-                original_name = member.name  
-                sanitized_name = PathConverter.sanitize_filename(original_name)
-                
-                member.name = sanitized_name
-                tar.extract(member, path=extract_to, numeric_owner=True) 
+        error_list = []
+        try:
+            with tarfile.open(compress_file_path, "r:*") as tar:
+                for member in tar.getmembers():
+                    try:
+                        original_name = member.name  
+                        sanitized_name = PathConverter.sanitize_filename(original_name)
 
-                print(f"파일 uid: {member.uid} 파일 gid:{member.gid} 파일 권한 : {oct(member.mode)[2:]} 파일 크기 : {member.size}")
-                print(f"추출 완료: {extract_to + PathConverter.convert_wsl_to_windows_path(sanitized_name)}",end='\n\n')
+                        # 안전한 파일 경로 설정
+                        extracted_path = os.path.join(extract_to, original_name)
+                        safe_extracted_path = os.path.join(extract_to, sanitized_name)
+
+                        tar.extract(member, path=extract_to, numeric_owner=True)
+
+                        # 파일명 변경 (원본 → 안전한 이름)
+                        if original_name != sanitized_name:
+                            os.rename(extracted_path, safe_extracted_path)
+
+                        print(f"파일 UID: {member.uid}, GID: {member.gid}, 권한: {oct(member.mode)[2:]}, 크기: {member.size}")
+                        print(f"추출 완료: {safe_extracted_path}\n")
+
+                    except PermissionError as perm_err:
+                        print(f"권한 오류:{member.name} - 접근할 수 없습니다. 건너뜁니다.")
+                        error_list.append(member.name)
+                        continue
+
+                    except Exception as file_error:
+                        print(f"❌ 파일 {member.name} 추출 중 오류 발생: {file_error}")
+                        continue  # 특정 파일에서 오류 발생 시 건너뛰고 계속 진행
+
+        except Exception as e:
+            print(f"❌ TAR 파일 처리 중 오류 발생: {e}")
+        
+        if error_list:
+            print(f"\n 다음 파일들은 권한 문제로 인해 추출되지 않았습니다")
+            for err_file in error_list:
+                print(f" - {err_file}")
+
 
 class Spliter():
 
@@ -624,33 +652,6 @@ class RegexUtils:
                     if re.search(pattern, line, re.IGNORECASE):
                         matches.append(line.strip())
         return matches
-
-class HashSearcher():
-
-    def __init__(self):
-        self.patterns = [
-            r"[a-zA-Z0-9!\"#$%&'()*+,-./:;<=>?@[\\^_`{|}~]+:\$1\$[a-zA-Z0-9!\"#$%&'()*+,-./:;<=>?@[\\^_`{|}~]{8}\$[a-zA-Z0-9!\"#$%&'()*+,-./:;<=>?@[\\^_`{|}~]{22}",
-            r"[a-zA-Z0-9!\"#$%&'()*+,-./:;<=>?@[\\^_`{|}~]+:\$5\$[a-zA-Z0-9!\"#$%&'()*+,-./:;<=>?@[\\^_`{|}~]{16}\$[a-zA-Z0-9!\"#$%&'()*+,-./:;<=>?@[\\^_`{|}~]{42}",
-            r"[a-zA-Z0-9!\"#$%&'()*+,-./:;<=>?@[\\^_`{|}~]+:\$6\$[a-zA-Z0-9!\"#$%&'()*+,-./:;<=>?@[\\^_`{|}~]{8}\$[a-zA-Z0-9!\"#$%&'()*+,-./:;<=>?@[\\^_`{|}~]{86}",
-            r"[a-zA-Z0-9!\"#$%&'()*+,-./:;<=>?@[\\^_`{|}~]+:\$6\$[a-zA-Z0-9!\"#$%&'()*+,-./:;<=>?@[\\^_`{|}~]{12}\$[a-zA-Z0-9!\"#$%&'()*+,-./:;<=>?@[\\^_`{|}~]{86}",
-            r"[a-zA-Z0-9!\"#$%&'()*+,-./:;<=>?@[\\^_`{|}~]+:\$6\$[a-zA-Z0-9!\"#$%&'()*+,-./:;<=>?@[\\^_`{|}~]{16}\$[a-zA-Z0-9!\"#$%&'()*+,-./:;<=>?@[\\^_`{|}~]{86}",
-            r"[a-zA-Z0-9!\"#$%&'()*+,-./:;<=>?@[\\^_`{|}~]+:\$2[abxy]\$[a-zA-Z0-9!\"#$%&'()*+,-./:;<=>?@[\\^_`{|}~]{22}\$[a-zA-Z0-9!\"#$%&'()*+,-./:;<=>?@[\\^_`{|}~]{31}",
-            r"[a-zA-Z0-9!\"#$%&'()*+,-./:;<=>?@[\\^_`{|}~]+:\$y\$[a-zA-Z0-9!\"#$%&'()*+,-./:;<=>?@[\\^_`{|}~]{3}\$[a-zA-Z0-9!\"#$%&'()*+,-./:;<=>?@[\\^_`{|}~]{22}\$[a-zA-Z0-9!\"#$%&'()*+,-./:;<=>?@[\\^_`{|}~]{43}"
-        ]
-        self.regex = RegexUtils.compile_patterns(self.patterns)
-    
-    # Windows에서 열수없는 파일들은 Exception로 감....
-    def search_hash_files(self,passwd_file_path:str) -> List[Tuple[str,str]]:
-        try:
-            with open(passwd_file_path, "r", errors="ignore") as f:
-                content = StringExtractor.convert_binary_data_to_string(f.read())
-                matches = self.regex.findall(content)
-                if matches:
-                    return [(passwd_file_path, match) for match in matches]
-        except Exception as e:
-            print(f"Error reading file {passwd_file_path}: {e}")
-        return []
-
 
 class PasswordFilesChecker():
 
@@ -738,8 +739,6 @@ class PasswordFilesChecker():
         crypt_list = ["descrypt","bsdicrypt","md5crypt","bcrypt","LM","AFS","tripcode","dummy","crypt"]
         target_files = FileHandler.get_file_with_keywords(firm_ware_dir,["passwd","shadow"])
         crack_result_data = []
-        tar_path = FileHandler.get_files_endingwith(firm_ware_dir,'tar.gz')[0]
-
         
         for target_file in target_files:
             try:
@@ -953,60 +952,36 @@ def print_fstab_info(dir_path:str):
 
 def get_device_info(file_path: str) -> Dict:
     try:
-        # Read the file content
-        with open(file_path, "r", encoding='utf-8') as file:
-            output = file.read().strip()
+        with open(file_path, "r", encoding="utf-8") as file:
+            logs = file.readlines()
 
-        # Split sections by "|"
-        sections = output.split("|")
+        # 가공된 데이터 저장용 리스트
+        parsed_data = []
 
-        # Initialize data dictionary
-        data = {
-            "CPU Architecture": "Unknown",
-            "Endianness": "Unknown",
-            "OS": "Unknown",
-            "Library": "Unknown",
-            "EABI Version": "Unknown",
-        }
+        for log in logs:
+            log = log.strip()  # 줄바꿈 제거
+            parts = log.split("|")
+            if len(parts) < 4:
+                continue  # 유효한 데이터인지 확인
 
-        # Extract OS (Linux Kernel Version)
-        if "Linux kernel version" in sections[2]:
-            data["OS"] = sections[2]  # Example: "Linux kernel version 2.6.36"
+            file_size = parts[0]  # 파일 크기
+            kernel_version = parts[2].replace("Linux kernel version ", "")  # 커널 버전
+            elf_info = parts[3]  # ELF 정보
 
-        # Extract ELF format details
-        elf_info = sections[3]  # Example: "ELF 32-bit LSB executable, MIPS, MIPS32 rel2 version 1 (SYSV), dynamically linked, interpreter /lib/ld-uClibc.so.0, stripped"
+            # ELF 정보 추가 분석
+            elf_parts = elf_info.split(", ")
+            arch = next((p for p in elf_parts if "MIPS" in p), "Unknown")  # MIPS 아키텍처 찾기
+            elf_type = elf_parts[0].split(" ")[-2]  # ELF Type (Executable / Shared Object)
+            linking = next((p for p in elf_parts if "linked" in p), "Unknown")  # 동적/정적 링크 찾기
+            interpreter = next((p.split(" ")[-1] for p in elf_parts if "interpreter" in p), "없음")  # 인터프리터
 
-        # Determine Endianness
-        if "LSB" in elf_info:
-            data["Endianness"] = "Little Endian"
-        elif "MSB" in elf_info:
-            data["Endianness"] = "Big Endian"
+            # 기타 정보 (BuildID, stripped, no section header 등)
+            other_info = ", ".join([p for p in elf_parts if "BuildID" in p or "stripped" in p or "no section" in p])
 
-        # Extract CPU Architecture
-        arch_parts = elf_info.split(", ")
-        for part in arch_parts:
-            if "MIPS32" in part:
-                data["CPU Architecture"] = part.strip()
-            elif "MIPS" in part:
-                data["CPU Architecture"] = "MIPS (Generic)"
+            # 정리된 데이터 추가
+            parsed_data.append([file_size, kernel_version, arch, elf_type, linking, interpreter, other_info])
 
-        # Extract EABI Version (Finding "EABI" in text)
-        for part in arch_parts:
-            if "EABI" in part:
-                data["EABI Version"] = part.split()[0]  # Example: Extract "EABI5"
-
-        # Extract Library (Interpreter)
-        if "interpreter" in elf_info:
-            lib_part = elf_info.split("interpreter")[-1].strip().split(",")[0]
-            if "uClibc" in lib_part:
-                data["Library"] = "uClibc (Embedded system)"
-            elif "glibc" in lib_part:
-                data["Library"] = "glibc (Standard Linux)"
-            elif "musl" in lib_part:
-                data["Library"] = "musl (Lightweight C library)"
-
-        return data
-    
+            print(parsed_data)        
     except Exception as e:
         return {"error": str(e)}
 
