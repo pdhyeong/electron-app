@@ -7,6 +7,7 @@ const {
     openDialog,
     readTreeStructure,
     openExplorer,
+    analyze_Folder,
     start_Siege
 } = require("./handler");
 
@@ -41,6 +42,7 @@ app.whenReady().then(() => {
     ipcMain.handle("get-tree-contents", readTreeStructure);
     ipcMain.on("exec-siege", exec_Extract_Siege);
     ipcMain.on("open-exploer",openExplorer);
+    ipcMain.on("analyze_folder",analyze_Folder);
     ipcMain.on("generate-siege",start_Siege);
 
     app.on("ready", () => {

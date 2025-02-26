@@ -6,11 +6,11 @@ from typing import TYPE_CHECKING, List, NamedTuple, Any, AnyStr, TypeVar
 
 from pydantic import BaseModel, Field
 
-from plugin import AnalysisPluginV0, Tag, addons, compat
+from analysis.plugin import AnalysisPluginV0, Tag, addons, compat
 from tag import TagColor
 from mime_blacklists import MIME_BLACKLIST_COMPRESSED
 
-from key_parser import read_asn1_key, read_pkcs_cert, read_ssl_cert
+from cryptfolder.plugins.analysis.crypto_material.internal.key_parser import read_asn1_key, read_pkcs_cert, read_ssl_cert
 
 if TYPE_CHECKING:
     import io

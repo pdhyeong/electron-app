@@ -2,7 +2,7 @@ const { dialog,BrowserWindow } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const tar = require("tar");
-const { exec } = require("child_process");
+const { exec,spawn } = require("child_process");
 const { stderr } = require("process");
 const { isMac,isLinux,isWindows } = require('./detect-platform');
 
@@ -243,6 +243,55 @@ const rollLogFile = (file_name, dir_path) => {
  * @param {response} event 
  * @param {object} arg 
  */
+const analyze_Folder = (event, arg) => {
+    const script_path = "C:\\Users\\raon\\Park\\electron-app\\checkfirmware.py";
+    const folder_path = arg.folder_path;
+
+    if (folder_path && typeof folder_path === "string") {
+        try {
+            // Python 실행 (shell: true 필요)
+            const process = spawn("python", [script_path, folder_path], { shell: true });
+
+            let outputData = "";
+            let errorData = "";
+
+            // 표준 출력 데이터 처리 (스트리밍 방식 적용)
+            process.stdout.on("data", (data) => {
+                outputData += data.toString("utf8");  // UTF-8 변환
+                if (outputData.length > 10 * 1024 * 1024) { // 10MB 이상이면 강제 종료
+                    console.error("stdout buffer exceeded limit. Killing process...");
+                    process.kill();
+                }
+            });
+
+            // 표준 에러 데이터 처리
+            process.stderr.on("data", (data) => {
+                errorData += data.toString("utf8");
+            });
+
+            // 프로세스 종료 후 결과 반환
+            process.on("close", (code) => {
+                if (code === 0) {
+                    event.reply("analyze_result", outputData.trim());
+                } else {
+                    event.reply("analyze_result", "execError");
+                    console.error(`Python 실행 실패 (코드: ${code})`);
+                    console.error(`오류 메시지: ${errorData}`);
+                }
+            });
+
+        } catch (err) {
+            console.error(`예기치 않은 오류 발생: ${err}`);
+            event.reply("analyze_result", "execError");
+        }
+    }
+};
+
+/**
+ * 
+ * @param {response} event 
+ * @param {object} arg 
+ */
 const exec_Extract_Siege = (event, arg) => {
     const siege_extract_cmd = "siege -e";
     const { extract_file: extractFilePath, direct: resultDirect } = arg;
@@ -382,4 +431,4 @@ const start_Siege= async (event) => {
     }
 }
 
-module.exports = { read_Diretory, exec_Extract_Siege, openDialog, readTreeStructure, openExplorer, start_Siege};
+module.exports = { read_Diretory, exec_Extract_Siege, openDialog, readTreeStructure, openExplorer,analyze_Folder, start_Siege};
